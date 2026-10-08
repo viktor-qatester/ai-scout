@@ -238,15 +238,18 @@ def test_duplicates_are_not_sent_again(tmp_path):
     assert third.dropped_duplicate == 1
 
 
-def test_schedule_stays_wired_and_unchanged():
-    assert SCAN_CRON == "0 9,15,21 * * *"
+def test_schedule_is_monday_and_thursday_at_six_minsk():
+    assert SCAN_CRON == "0 6 * * 1,4"
     assert entrypoint.configured_schedule() == SCAN_CRON
-    morning = datetime(2026, 10, 7, 8, 30, tzinfo=ZoneInfo("Europe/Minsk"))
-    assert next_run(morning).hour == 9
-    evening = datetime(2026, 10, 7, 22, 0, tzinfo=ZoneInfo("Europe/Minsk"))
-    following = next_run(evening)
-    assert following.day == 8
-    assert following.hour == 9
+    after_thursday_morning = datetime(2026, 10, 8, 11, 0, tzinfo=ZoneInfo("Europe/Minsk"))
+    monday = next_run(after_thursday_morning)
+    assert monday.isoformat().startswith("2026-10-12T06:00:00")
+    early_monday = datetime(2026, 10, 12, 5, 30, tzinfo=ZoneInfo("Europe/Minsk"))
+    same_morning = next_run(early_monday)
+    assert same_morning.isoformat().startswith("2026-10-12T06:00:00")
+    at_six = datetime(2026, 10, 12, 6, 0, tzinfo=ZoneInfo("Europe/Minsk"))
+    thursday = next_run(at_six)
+    assert thursday.isoformat().startswith("2026-10-15T06:00:00")
 
 
 def test_both_tracks_are_searched(tmp_path):
