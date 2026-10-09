@@ -58,6 +58,19 @@ function titleBlocksAi(title) {
   );
 }
 
+const AI_TERMS =
+  "\\bai\\b|\\bllm\\b|\\brag\\b|genai|generative ai|prompt engineer|chatgpt|нейросет|искусствен\\w* интеллект|\\bии\\b|ии-агент";
+
+function countMatches(text, pattern) {
+  const source = rx(pattern).source;
+  return [...normalize(text).matchAll(new RegExp(source, "giu"))].length;
+}
+
+// Одно упоминание ИИ в списке требований не делает вакансию AI-вакансией.
+function mentionsAiEnough(title, description) {
+  return has(title, AI_TERMS) || countMatches(description, AI_TERMS) >= 2;
+}
+
 function categoryFor(title, description) {
   const text = `${title}\n${description}`;
   const other = titleIsOtherProfession(title);
@@ -79,20 +92,17 @@ function categoryFor(title, description) {
     !blocksAi &&
     has(
       text,
-      "data annotat|разметк\\w*\\s+данн|специалист по внедрению ии|внедрен\\w*\\s+ии|специалист по ии|специалист по искусствен\\w*\\s+интеллект|ai\\s+trainer|ai\\s+assistant",
+      "data annotat|data label|разметк\\w*\\s+данн|специалист по внедрению ии|внедрен\\w*\\s+ии|специалист по ии|специалист по нейросет|специалист по искусствен\\w*\\s+интеллект|ai[\\s-]+специалист|ai\\s+trainer|ai\\s+assistant|ai\\s+ассистент|оператор\\w*\\s+нейросет|асс?ессор\\w*\\s+(ии|ai|нейросет|llm)|prompt\\s+(engineer|инженер)|промпт[\\s-]*инженер",
     );
   const ml =
     !blocksAi &&
-    has(text, "machine learning|\\bml engineer\\b|data scientist|машинн\\w* обучен");
+    has(
+      text,
+      "machine learning|\\bml\\s+(engineer|инженер|стажер|intern)|\\bnlp\\b|computer vision|компьютерн\\w*\\s+зрен|data scientist|машинн\\w* обучен",
+    );
   const ai =
     !blocksAi &&
-    (aiQa ||
-      entry ||
-      ml ||
-      has(
-        text,
-        "\\bai\\b|\\bllm\\b|\\brag\\b|genai|generative ai|prompt engineer|chatgpt|нейросет|искусствен\\w* интеллект|\\bии\\b",
-      ));
+    (aiQa || entry || ml || mentionsAiEnough(title, description));
   if (aiQa || (qa && ai)) return "AI + QA";
   if (entry) return "AI Entry Level";
   if (ml) return "ML / Data";
@@ -132,20 +142,20 @@ function minimumYears(text) {
   const found = [];
   const patterns = [
     rx(
-      "(?:опыт\\w*|experience).{0,40}?(?:от|более|больше|не менее|минимум|minimum|at least)?\\s*(?<![\\d.,])(\\d+)\\s*\\+?\\s*(?:лет|года|год|years)",
+      "(?:опыт\\w*|experience).{0,40}?(?:от|более|больше|не менее|минимум|minimum|at least)?\\s*(?<![\\d.,])(\\d+(?:[.,]\\d+)?)\\s*\\+?\\s*(?:лет|года|год|years)",
       "giu",
     ),
     rx(
-      "(?:от|не менее|минимум|minimum|at least)\\s+(?<![\\d.,])(\\d+)\\s*\\+?\\s*(?:лет|года|год|years).{0,20}?(?:опыт|experience)",
+      "(?:от|не менее|минимум|minimum|at least)\\s+(?<![\\d.,])(\\d+(?:[.,]\\d+)?)\\s*\\+?\\s*(?:лет|года|год|years).{0,20}?(?:опыт|experience)",
       "giu",
     ),
     rx(
-      "(?<![\\d.,])(\\d+)\\s*\\+?\\s*(?:лет|года|год|years)(?:\\s+of)?\\s*(?:commercial\\s+)?(?:experience|опыт)",
+      "(?<![\\d.,])(\\d+(?:[.,]\\d+)?)\\s*\\+?\\s*(?:лет|года|год|years)(?:\\s+of)?\\s*(?:commercial\\s+)?(?:experience|опыт)",
       "giu",
     ),
   ];
   for (const pattern of patterns) {
-    for (const match of sample.matchAll(pattern)) found.push(Number(match[1]));
+    for (const match of sample.matchAll(pattern)) found.push(Number(match[1].replace(",", ".")));
   }
   if (!found.length) return null;
   return Math.min(...found);
@@ -172,7 +182,7 @@ function hasJuniorSignal(vacancy) {
     return true;
   }
   const years = minimumYears(vacancy.description || "");
-  return years !== null && years <= 3;
+  return years !== null && years <= 2;
 }
 
 function prefilterReason(vacancy) {
@@ -182,7 +192,7 @@ function prefilterReason(vacancy) {
 
 function hardReject(title, description) {
   const years = minimumYears(description);
-  if (years !== null && years >= 5) return `в требованиях опыт от ${years} лет`;
+  if (years !== null && years >= 3) return `в требованиях опыт от ${years} лет`;
   const cleaned = normalize(stripTeamContext(description));
   if (
     has(
@@ -210,7 +220,9 @@ function geoStatus(vacancy) {
 function placeLabel(vacancy, geo) {
   if (has(vacancy.area || "", BELARUS_PLACE)) return vacancy.area;
   if (geo === "confirmed") return "удалённо, Беларусь подходит";
-  return "удалённо, Беларусь в тексте не указана: уточните у работодателя";
+  const office = [vacancy.pageCity, vacancy.pageCountry].filter(Boolean).join(", ");
+  const note = "удалённо, Беларусь в тексте не указана: уточните у работодателя";
+  return office ? `${note}\nОфис компании: ${office}` : note;
 }
 
 function scoreVacancy(vacancy, category, geo) {

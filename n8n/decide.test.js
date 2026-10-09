@@ -301,3 +301,70 @@ test("продавец с упоминанием ИИ в тексте не ст�
     null,
   );
 });
+
+test("опыт «от 3 лет» без уровня и без признаков junior не отправляется", () => {
+  const [row] = decideBatch([
+    {
+      title: "Data Scientist / AI Engineer (LLM, AI-агенты)",
+      company: "BGStaff",
+      url: "https://career.habr.com/vacancies/70",
+      area: "",
+      remote: true,
+      level: "",
+      description: "Ищем Data Scientist с коммерческим опытом от 3 лет. Python, PyTorch, LLM.",
+    },
+  ]);
+  assert.equal(row.action, "drop");
+});
+
+test("одно упоминание ИИ-агентов в требованиях не делает QA вакансией AI + QA", () => {
+  const description =
+    "Опыт работы в роли QA Automation Engineer (Java) от 1,6 года. Уверенные знания SQL. Опыт работы с ИИ-агентами.";
+  assert.equal(categoryFor("QA Automation Engineer (Java)", description), "QA");
+  assert.equal(
+    categoryFor("QA Engineer", "Тестируем LLM-ассистента. Prompt-инженерия, оценка ответов нейросети."),
+    "AI + QA",
+  );
+});
+
+test("для удалёнки без страны в сообщении указан город офиса компании", () => {
+  const [row] = decideBatch([
+    {
+      title: "QA Automation Engineer (Java)",
+      company: "Aston",
+      url: "https://career.habr.com/vacancies/71",
+      area: "",
+      remote: true,
+      level: "Junior",
+      pageCity: "Москва",
+      pageCountry: "Россия",
+      description: "Опыт от 1,6 года. Тестирование микросервисов.",
+    },
+  ]);
+  assert.equal(row.action, "send");
+  assert.match(row.text, /Офис компании: Москва, Россия/);
+  assert.match(row.text, /^🧪 QA \/ Junior/);
+});
+
+test("опыт от 3 лет отбрасывается даже при уровне Junior в карточке", () => {
+  const [row] = decideBatch([
+    {
+      title: "QA Engineer",
+      company: "Co",
+      url: "https://career.habr.com/vacancies/72",
+      area: "Минск",
+      remote: false,
+      level: "Junior",
+      description: "Требуется опыт работы от 3 лет в тестировании.",
+    },
+  ]);
+  assert.equal(row.action, "drop");
+  assert.match(row.dropReason, /опыт от 3/);
+});
+
+test("новые AI-специальности распознаются", () => {
+  assert.equal(categoryFor("Prompt Engineer (стажёр)", ""), "AI Entry Level");
+  assert.equal(categoryFor("Оператор нейросетей", "Работа с ChatGPT"), "AI Entry Level");
+  assert.equal(categoryFor("AI-тренер", "Обучение моделей, ai trainer"), "AI Entry Level");
+  assert.equal(categoryFor("Junior ML Engineer", "NLP, Python"), "ML / Data");
+});
