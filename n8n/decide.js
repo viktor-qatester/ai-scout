@@ -121,7 +121,7 @@ function categoryFor(title, description) {
 }
 
 function titleIsJunior(title) {
-  return has(title, "junior|\\bjr\\b|intern|trainee|entry|стажер|стажировк|без опыта");
+  return has(title, "\\bjunior\\b|\\bjr\\b|\\bintern\\b|\\btrainee\\b|\\bentry\\b|стажер|стажировк|без опыта");
 }
 
 function levelIsJunior(level) {
@@ -150,8 +150,7 @@ function yearsWord(years) {
   if (!Number.isInteger(years)) return "года";
   const mod10 = years % 10;
   const mod100 = years % 100;
-  if (mod10 === 1 && mod100 !== 11) return "год";
-  if (mod10 >= 2 && mod10 <= 4 && (mod100 < 12 || mod100 > 14)) return "года";
+  if (mod10 === 1 && mod100 !== 11) return "года";
   return "лет";
 }
 
@@ -204,7 +203,8 @@ function roleText(vacancy) {
   return String(raw).replace(rx("опытн\\w*\\s+и\\s+начинающ\\w*", "giu"), " ");
 }
 
-const JUNIOR_TEXT = "junior|intern|trainee|entry level|стажер|стажировк|без опыта|опыт не требуется|для начинающ";
+const JUNIOR_TEXT =
+  "\\bjunior\\b|\\bintern\\b|\\btrainee\\b|entry level|стажер|стажировк|без опыта|опыт не требуется|для начинающ";
 
 // Уровень в карточке не указан: нужен junior, стажировка или «без опыта» в названии или тексте роли.
 function hasJuniorSignal(vacancy) {
@@ -415,7 +415,8 @@ function experienceHints(label) {
   if (match) {
     const from = Number(match[1].replace(",", "."));
     if (from >= 3) return { level: "Middle", phrase: "" };
-    return { level: "", phrase: `опыт от ${from} года` };
+    // «1–3 года» на карточке слишком грубо: фраза «от 1 года» прятала настоящие «от 3 лет» в тексте.
+    return { level: "", phrase: "" };
   }
   return { level: "", phrase: "" };
 }

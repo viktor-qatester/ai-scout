@@ -394,6 +394,23 @@ test("«опыт от двух лет» без junior в названии не �
   assert.equal(row.action, "drop");
 });
 
+test("слово internal не считается стажировкой, а «2–3 years» отбрасывается", () => {
+  const [row] = decideBatch([
+    {
+      title: "Automation Quality Assurance Engineer (JS/Playwright)",
+      company: "RichBrains",
+      url: "https://rabota.by/vacancy/82",
+      area: "Минск",
+      remote: true,
+      level: "",
+      description:
+        "Developing and maintaining internal automation libraries. Requirements: 2–3 years of commercial experience. Actively using AI tools.",
+    },
+  ]);
+  assert.equal(row.action, "drop");
+  assert.match(row.dropReason, /опыт от 3/);
+});
+
 test("новые AI-специальности распознаются", () => {
   assert.equal(categoryFor("Prompt Engineer (стажёр)", ""), "AI Entry Level");
   assert.equal(categoryFor("Оператор нейросетей", "Работа с ChatGPT"), "AI Entry Level");
