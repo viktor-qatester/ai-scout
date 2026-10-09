@@ -23,6 +23,25 @@ const candidates = selectCandidates(lists, alreadySent);
 return candidates.map((vacancy) => ({ json: { ...vacancy, chatId, mode: "live" } }));
 """
 
+SOURCES_TAIL = r"""
+const helpers = this.helpers;
+const queries = $("Запросы").all().map((item) => item.json.q);
+const habr = $input.all().map((item) => ({ json: item.json }));
+const http = async (url) => {
+  const body = await helpers.httpRequest({
+    method: "GET",
+    url,
+    headers: { "User-Agent": BROWSER_UA, Accept: "*/*" },
+    json: false,
+    timeout: 20000,
+  });
+  return typeof body === "string" ? body : JSON.stringify(body);
+};
+const { batches, errors } = await collectOtherSources(http, queries);
+const report = { source: "report", errors };
+return [...habr, ...batches.map((batch) => ({ json: batch })), { json: report }];
+"""
+
 DECIDE_TAIL = r"""
 const items = $input.all();
 const head = items[0] ? items[0].json || {} : {};
@@ -114,7 +133,7 @@ def build() -> dict:
                     "content": (
                         "## Агент, не разовый скрипт\n\n"
                         "1. Просыпается сам: понедельник и четверг в 06:00 по Минску.\n"
-                        "2. Зовёт инструмент: открытый список вакансий Хабр Карьеры.\n"
+                        "2. Зовёт инструменты: Хабр Карьера, rabota.by, praca.by, Himalayas, We Work Remotely.\n"
                         "3. Отсекает Lead, Senior и Middle по карточке, потом читает страницу вакансии.\n"
                         "4. Решает: отправить или выкинуть. Смотрит страну и текст.\n"
                         "5. Помнит уже отправленные ссылки.\n"
@@ -263,17 +282,24 @@ def build() -> dict:
                 },
             ),
             node(
-                "Подготовка",
+                "Другие источники",
                 "n8n-nodes-base.code",
                 2,
                 [1000, 740],
+                {"language": "javaScript", "jsCode": shared + "\n" + SOURCES_TAIL},
+            ),
+            node(
+                "Подготовка",
+                "n8n-nodes-base.code",
+                2,
+                [1240, 740],
                 {"language": "javaScript", "jsCode": shared + "\n" + PREPARE_TAIL},
             ),
             node(
                 "Страница вакансии",
                 "n8n-nodes-base.httpRequest",
                 4.2,
-                [1240, 740],
+                [1480, 740],
                 {
                     "method": "GET",
                     "url": "={{ $json.url }}",
@@ -304,14 +330,14 @@ def build() -> dict:
                 "Решение",
                 "n8n-nodes-base.code",
                 2,
-                [1500, 520],
+                [1740, 520],
                 {"language": "javaScript", "jsCode": shared + "\n" + DECIDE_TAIL},
             ),
             node(
                 "Отправлять",
                 "n8n-nodes-base.if",
                 2.2,
-                [1760, 700],
+                [2000, 700],
                 {
                     "conditions": {
                         "options": {
@@ -343,7 +369,7 @@ def build() -> dict:
                 "Telegram",
                 "n8n-nodes-base.telegram",
                 1.2,
-                [2020, 640],
+                [2260, 640],
                 {
                     "chatId": "={{ $json.chatId }}",
                     "text": "={{ $json.text }}",
@@ -362,7 +388,8 @@ def build() -> dict:
             "Боевой прогон сейчас": {"main": link("Настройки")},
             "Настройки": {"main": link("Запросы")},
             "Запросы": {"main": link("Хабр Карьера")},
-            "Хабр Карьера": {"main": link("Подготовка")},
+            "Хабр Карьера": {"main": link("Другие источники")},
+            "Другие источники": {"main": link("Подготовка")},
             "Подготовка": {"main": link("Страница вакансии")},
             "Страница вакансии": {"main": link("Решение")},
             "Решение": {"main": link("Отправлять")},

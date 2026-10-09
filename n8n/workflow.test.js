@@ -55,7 +55,8 @@ test("в схеме есть узлы подготовки и загрузки �
     Object.keys(workflow.connections["Хабр Карьера"]),
     ["main"],
   );
-  assert.equal(workflow.connections["Хабр Карьера"].main[0][0].node, "Подготовка");
+  assert.equal(workflow.connections["Хабр Карьера"].main[0][0].node, "Другие источники");
+  assert.equal(workflow.connections["Другие источники"].main[0][0].node, "Подготовка");
   assert.equal(workflow.connections["Подготовка"].main[0][0].node, "Страница вакансии");
   assert.equal(workflow.connections["Страница вакансии"].main[0][0].node, "Решение");
 });
@@ -144,4 +145,80 @@ test("Решение: повторный запуск не шлёт ту же с
   });
   assert.equal(out[0].json.action, "drop");
   assert.match(out[0].json.dropReason, /уже отправляли/);
+});
+
+const rabotaHtml = `<div data-qa="vacancy-serp__vacancy"><a href="https://rabota.by/vacancy/111?query=x"></a>
+<span data-qa="serp-item__title-text">Junior QA</span>
+<span data-qa="vacancy-serp__vacancy-employer-text">Alpha</span>
+<span data-qa="vacancy-serp__vacancy-address">Минск</span>
+<span data-qa="vacancy-serp__vacancy-work-experience-noExperience">Без опыта</span></div>`;
+
+const pracaHtml = `<li class="locationDepended vac-small"><a href="/vacancy/222/?q=1" target="_blank"><h2>QA стажировка</h2></a>
+<a href="/organization/1/" class="vac-small__organization">ООО Бета</a>
+<div class="vacancy__search-description">Обучение тестированию</div>
+<div class="vac-small__experience"><i></i>Опыт работы не имеет значения</div>
+<div class="vac-small__city"><i></i>Гомель</div></li>`;
+
+const himalayasJson = JSON.stringify({
+  jobs: [
+    { title: "Junior QA", companyName: "Gamma", seniority: ["Entry-level"], locationRestrictions: [], guid: "https://himalayas.app/g/1", description: "<p>Manual testing</p>" },
+    { title: "QA Intern", companyName: "Delta", seniority: ["Entry-level"], locationRestrictions: ["Brazil"], guid: "https://himalayas.app/g/2", description: "x" },
+  ],
+});
+
+const wwrXml = `<rss><channel><item><title>Eps: QA Intern</title><region>Anywhere in the World</region><country></country>
+<link>https://weworkremotely.com/remote-jobs/eps-qa</link><description><![CDATA[<p>Testing</p>]]></description></item>
+<item><title>Zed: QA Engineer</title><region>USA Only</region><country>United States</country><link>https://weworkremotely.com/x</link><description>y</description></item></channel></rss>`;
+
+async function runSources(fetcher) {
+  const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor;
+  const fn = new AsyncFunction("$input", "$", `"use strict";\n${codeOf("Другие источники")}`);
+  const input = { all: () => [{ json: { list: [] } }] };
+  const lookup = () => ({ all: () => [{ json: { q: "Junior QA" } }] });
+  return fn.call({ helpers: { httpRequest: async ({ url }) => fetcher(url) } }, input, lookup);
+}
+
+test("Другие источники: четыре источника собираются в единый вид", async () => {
+  const out = await runSources((url) => {
+    if (url.includes("rabota.by")) return rabotaHtml;
+    if (url.includes("praca.by")) return pracaHtml;
+    if (url.includes("himalayas")) return himalayasJson;
+    return wwrXml;
+  });
+  const batches = Object.fromEntries(
+    out.filter((row) => row.json.vacancies).map((row) => [row.json.source, row.json.vacancies]),
+  );
+  assert.equal(batches["rabota.by"][0].url, "https://rabota.by/vacancy/111");
+  assert.equal(batches["rabota.by"][0].level, "Junior");
+  assert.equal(batches["praca.by"][0].area, "Гомель");
+  assert.deepEqual([...new Set(batches.himalayas.map((v) => v.url))], ["https://himalayas.app/g/1"]);
+  assert.deepEqual(batches.weworkremotely.map((v) => v.company), ["Eps"]);
+  assert.equal(batches.weworkremotely[0].company, "Eps");
+});
+
+test("Другие источники: упавший источник не ломает остальные и попадает в отчёт", async () => {
+  const out = await runSources((url) => {
+    if (url.includes("praca.by")) throw new Error("HTTP 503");
+    return url.includes("rabota.by") ? rabotaHtml : url.includes("himalayas") ? himalayasJson : wwrXml;
+  });
+  const report = out.find((row) => row.json.source === "report").json;
+  assert.ok(report.errors.some((line) => line.startsWith("praca.by")));
+  assert.ok(out.some((row) => row.json.source === "rabota.by"));
+});
+
+test("Подготовка берёт вакансии всех источников и не грузит страницы Himalayas", () => {
+  const out = runNode("Подготовка", {
+    items: [
+      habrList,
+      { source: "rabota.by", vacancies: [{ title: "Junior QA", company: "A", url: "https://rabota.by/vacancy/1", area: "Минск", remote: false, level: "Junior", description: "", source: "rabota.by" }] },
+      { source: "himalayas", vacancies: [{ title: "QA Intern", company: "B", url: "https://himalayas.app/x", area: "", remote: true, level: "Junior", description: "Remote, worldwide.", source: "himalayas", noPage: true }] },
+      { source: "report", errors: [] },
+    ],
+    previous: { Настройки: [{ chatId: "1" }] },
+    memory: { seen: [] },
+  });
+  const urls = out.map((row) => row.json.url);
+  assert.ok(urls.includes("https://rabota.by/vacancy/1"));
+  assert.ok(urls.includes("https://himalayas.app/x"));
+  assert.equal(out.find((row) => row.json.url === "https://himalayas.app/x").json.noPage, true);
 });

@@ -6,7 +6,8 @@
 
 // Middle по карточке Хабра по умолчанию не подходит начинающему.
 const ALLOW_MIDDLE = false;
-const DETAIL_LIMIT = 40;
+const DETAIL_LIMIT = 60;
+const SOURCE_QUOTA = { habr: 20, default: 12 };
 
 const WORD = "[\\p{L}\\p{N}_]";
 const BOUNDARY = `(?:(?<!${WORD})(?=${WORD})|(?<=${WORD})(?!${WORD}))`;
@@ -68,11 +69,27 @@ function countMatches(text, pattern) {
 
 // Одно упоминание ИИ в списке требований не делает вакансию AI-вакансией.
 function mentionsAiEnough(title, description) {
-  return has(title, AI_TERMS) || countMatches(description, AI_TERMS) >= 2;
+  if (has(title, AI_TERMS)) return true;
+  const needed = String(description || "").length > 1500 ? 3 : 2;
+  return countMatches(description, AI_TERMS) >= needed;
+}
+
+const ML_TERMS =
+  "machine learning|\\bml\\s+(engineer|инженер|стажер|intern)|\\bnlp\\b|computer vision|компьютерн\\w*\\s+зрен|data scientist|машинн\\w* обучен";
+
+const QA_TERMS =
+  "\\bqa\\b|\\baqa\\b|\\bsdet\\b|quality assurance|\\btester\\b|\\btesting\\b|тестиров|тестирован|инженер по тестированию|специалист по тестированию";
+
+// В длинном описании слово «testing» встречается у любой вакансии: без QA в названии нужно три упоминания.
+function mentionsQaEnough(title, description) {
+  if (has(title, QA_TERMS)) return true;
+  const needed = String(description || "").length > 1500 ? 4 : 1;
+  return countMatches(description, QA_TERMS) >= needed;
 }
 
 function categoryFor(title, description) {
-  const text = `${title}\n${description}`;
+  const long = String(description || "").length > 1500;
+  const text = long ? String(title) : `${title}\n${description}`;
   const other = titleIsOtherProfession(title);
   const blocksAi = titleBlocksAi(title);
   const aiQa =
@@ -82,12 +99,7 @@ function categoryFor(title, description) {
       text,
       "ai\\s*qa|qa\\s*ai|ai\\s+tester|ai\\s+testing|llm\\s+qa|llm\\s+evaluation|ai\\s+quality|оценк\\w*\\s+(модел|llm|ии)",
     );
-  const qa =
-    !other &&
-    has(
-      text,
-      "\\bqa\\b|\\baqa\\b|\\bsdet\\b|quality assurance|\\btester\\b|\\btesting\\b|тестиров|тестирован|инженер по тестированию|специалист по тестированию",
-    );
+  const qa = !other && mentionsQaEnough(title, description);
   const entry =
     !blocksAi &&
     has(
@@ -96,10 +108,7 @@ function categoryFor(title, description) {
     );
   const ml =
     !blocksAi &&
-    has(
-      text,
-      "machine learning|\\bml\\s+(engineer|инженер|стажер|intern)|\\bnlp\\b|computer vision|компьютерн\\w*\\s+зрен|data scientist|машинн\\w* обучен",
-    );
+    (has(title, ML_TERMS) || countMatches(description, ML_TERMS) >= (String(description || "").length > 1500 ? 3 : 1));
   const ai =
     !blocksAi &&
     (aiQa || entry || ml || mentionsAiEnough(title, description));
@@ -176,7 +185,7 @@ function levelDropReason(vacancy) {
 
 // Уровень в карточке не указан: нужен хоть один признак начинающего.
 function hasJuniorSignal(vacancy) {
-  const text = `${vacancy.title}\n${vacancy.description || ""}`;
+  const text = vacancy.noPage ? vacancy.title : `${vacancy.title}\n${vacancy.description || ""}`;
   if (titleIsJunior(vacancy.title) || levelIsJunior(vacancy.level)) return true;
   if (has(text, "junior|intern|trainee|entry level|стажер|стажировк|без опыта|опыт не требуется|начинающ")) {
     return true;
@@ -226,7 +235,7 @@ function placeLabel(vacancy, geo) {
 }
 
 function scoreVacancy(vacancy, category, geo) {
-  const text = `${vacancy.title}\n${vacancy.description || ""}`;
+  const text = vacancy.noPage ? vacancy.title : `${vacancy.title}\n${vacancy.description || ""}`;
   let score = 0;
   const reasons = [];
   if (
@@ -305,7 +314,7 @@ function decideVacancy(vacancy) {
   if (geo === "blocked") {
     return { ...base, geo, dropReason: "в тексте указано «только РФ» или вакансия не в Беларуси" };
   }
-  const category = categoryFor(title, description);
+  const category = categoryFor(title, vacancy.noPage ? "" : description);
   if (!category) return { ...base, geo, dropReason: "роль не QA и не AI" };
   if (!normalize(vacancy.level) && !hasJuniorSignal(vacancy)) {
     return { ...base, category, geo, dropReason: "уровень не указан и признаков junior нет" };
@@ -365,6 +374,187 @@ function adaptHabr(item) {
   };
 }
 
+const BROWSER_UA =
+  "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36";
+
+function decodeEntities(text) {
+  return String(text || "")
+    .replace(/&nbsp;|&#160;/g, " ")
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;|&#x27;/g, "'")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/&amp;/g, "&");
+}
+
+function plain(html) {
+  return decodeEntities(String(html || "").replace(/<[^>]+>/g, " ")).replace(/\s+/g, " ").trim();
+}
+
+// Опыт в карточке rabota.by и praca.by переводим в уровень и в фразу, которую понимает minimumYears.
+function experienceHints(label) {
+  const text = normalize(label);
+  if (!text) return { level: "", phrase: "" };
+  if (has(text, "без опыта|не имеет значения|не требуется")) return { level: "Junior", phrase: "без опыта" };
+  if (has(text, "более 6|свыше 6|6 лет")) return { level: "Senior", phrase: "" };
+  const match = text.match(/(\d+(?:[.,]\d+)?)\s*[-–—]\s*(\d+(?:[.,]\d+)?)/);
+  if (match) {
+    const from = Number(match[1].replace(",", "."));
+    if (from >= 3) return { level: "Middle", phrase: "" };
+    return { level: "", phrase: `опыт от ${from} года` };
+  }
+  return { level: "", phrase: "" };
+}
+
+function parseRabotaHtml(html) {
+  const parts = String(html || "").split('data-qa="vacancy-serp__vacancy"').slice(1);
+  const found = [];
+  for (const chunk of parts) {
+    const window = chunk.slice(0, 12000);
+    const url = (window.match(/href="(https:\/\/(?:rabota\.by|hh\.ru)\/vacancy\/\d+)[^"]*"/) || [])[1];
+    const title = (window.match(/data-qa="serp-item__title-text"[^>]*>([\s\S]*?)<\/span>/) || [])[1];
+    if (!url || !title) continue;
+    const company = (window.match(/data-qa="vacancy-serp__vacancy-employer(?:-text)?"[^>]*>([\s\S]*?)<\//) || [])[1];
+    const address = (window.match(/data-qa="vacancy-serp__vacancy-address"[^>]*>([\s\S]*?)<\/span>/) || [])[1];
+    const experience = (window.match(/data-qa="vacancy-serp__vacancy-work-experience-[^"]+"[^>]*>([\s\S]*?)<\//) || [])[1];
+    const hints = experienceHints(plain(experience));
+    found.push({
+      title: plain(title),
+      company: plain(company),
+      url: url.replace("https://hh.ru/", "https://rabota.by/"),
+      area: plain(address),
+      remote: window.includes("vacancy-label-work-schedule-remote"),
+      level: hints.level,
+      description: hints.phrase,
+      source: "rabota.by",
+    });
+  }
+  return found;
+}
+
+function parsePracaHtml(html) {
+  const parts = String(html || "").split('class="locationDepended vac-small"').slice(1);
+  const found = [];
+  for (const chunk of parts) {
+    const window = chunk.slice(0, 6000);
+    const link = window.match(/href="(\/vacancy\/\d+)\/[^"]*"[\s\S]*?<h2>([\s\S]*?)<\/h2>/);
+    if (!link) continue;
+    const company = (window.match(/class="vac-small__organization"[^>]*>([\s\S]*?)<\/a>/) || [])[1];
+    const snippet = (window.match(/class="vacancy__search-description">([\s\S]*?)<\/div>/) || [])[1];
+    const experience = (window.match(/class="vac-small__experience">([\s\S]*?)<\/div>/) || [])[1];
+    const city = (window.match(/class="vac-small__city">([\s\S]*?)<\/div>/) || [])[1];
+    const hints = experienceHints(plain(experience));
+    found.push({
+      title: plain(link[2]),
+      company: plain(company),
+      url: `https://praca.by${link[1]}/`,
+      area: plain(city) || "Беларусь",
+      remote: false,
+      level: hints.level,
+      description: [plain(snippet), hints.phrase].filter(Boolean).join(". "),
+      source: "praca.by",
+    });
+  }
+  return found;
+}
+
+function seniorityToLevel(list) {
+  const text = normalize((list || []).join(" "));
+  if (has(text, "senior|lead|principal|staff|executive|manager")) return "Senior";
+  if (has(text, "entry|junior|intern|graduate")) return "Junior";
+  if (has(text, "mid")) return "Middle";
+  return "";
+}
+
+function adaptHimalayas(job) {
+  const places = job.locationRestrictions || [];
+  const worldwide = places.length === 0;
+  if (!worldwide && !has(places.join(" "), "belarus|беларус")) return null;
+  const body = plain(job.description || job.excerpt || "").slice(0, 3000);
+  return {
+    title: job.title || "",
+    company: job.companyName || "",
+    url: job.guid || job.applicationLink || "",
+    area: "",
+    remote: true,
+    level: seniorityToLevel(job.seniority),
+    description: `${worldwide ? "Remote, worldwide. " : "Remote, Belarus. "}${body}`,
+    source: "himalayas",
+    noPage: true,
+  };
+}
+
+function parseWwrRss(xml) {
+  const found = [];
+  for (const block of String(xml || "").split("<item>").slice(1)) {
+    const tag = (name) => {
+      const m = block.match(new RegExp(`<${name}>([\\s\\S]*?)</${name}>`));
+      return m ? m[1].replace(/<!\[CDATA\[([\s\S]*?)\]\]>/g, "$1") : "";
+    };
+    const region = plain(tag("region"));
+    const countries = plain(tag("country"));
+    const global = has(region, "anywhere|worldwide");
+    if (!global && !has(`${region} ${countries}`, "belarus")) continue;
+    const full = plain(tag("title"));
+    const split = full.indexOf(":");
+    found.push({
+      title: split > 0 ? full.slice(split + 1).trim() : full,
+      company: split > 0 ? full.slice(0, split).trim() : "",
+      url: plain(tag("link")),
+      area: "",
+      remote: true,
+      level: "",
+      description: `Remote, ${global ? "worldwide" : "Belarus"}. ${plain(tag("description")).slice(0, 3000)}`,
+      source: "weworkremotely",
+      noPage: true,
+    });
+  }
+  return found;
+}
+
+const PRACA_QUERIES = ["тестировщик", "QA", "стажировка ИИ", "искусственный интеллект", "нейросети", "Data Scientist"];
+const HIMALAYAS_QUERIES = ["junior qa", "qa intern", "junior ai", "prompt engineer", "llm", "junior machine learning"];
+
+function rabotaUrl(query) {
+  return `https://rabota.by/search/vacancy?text=${encodeURIComponent(query)}&area=16&items_on_page=20`;
+}
+
+function pracaUrl(query) {
+  return `https://praca.by/search/vacancies/?search%5Bquery%5D=${encodeURIComponent(query)}`;
+}
+
+function himalayasUrl(query) {
+  return `https://himalayas.app/jobs/api/search?q=${encodeURIComponent(query)}&sort=recent`;
+}
+
+const WWR_URL = "https://weworkremotely.com/remote-jobs.rss";
+
+// http(url) возвращает текст ответа. Ошибка одного источника не останавливает остальные.
+async function collectOtherSources(http, queries) {
+  const batches = [];
+  const errors = [];
+  const run = async (source, urls, parse) => {
+    const vacancies = [];
+    for (const url of urls) {
+      try {
+        vacancies.push(...parse(await http(url, source)));
+      } catch (error) {
+        errors.push(`${source}: ${error && error.message ? error.message : error}`);
+      }
+    }
+    batches.push({ source, vacancies });
+  };
+  await run("rabota.by", queries.map(rabotaUrl), parseRabotaHtml);
+  await run("praca.by", PRACA_QUERIES.map(pracaUrl), parsePracaHtml);
+  await run(
+    "himalayas",
+    HIMALAYAS_QUERIES.map(himalayasUrl),
+    (text) => (JSON.parse(text).jobs || []).map(adaptHimalayas).filter(Boolean),
+  );
+  await run("weworkremotely", [WWR_URL], parseWwrRss);
+  return { batches, errors };
+}
+
 function stripHtml(html) {
   return String(html || "")
     .replace(/<[^>]+>/g, " ")
@@ -406,6 +596,7 @@ function parseJobPosting(html) {
 }
 
 function enrichWithPage(vacancy, html) {
+  if (vacancy.noPage) return vacancy;
   const page = parseJobPosting(html);
   const description = [vacancy.description, page.description].filter(Boolean).join("\n");
   return { ...vacancy, description, pageCountry: page.country, pageCity: page.city };
@@ -414,16 +605,29 @@ function enrichWithPage(vacancy, html) {
 function selectCandidates(rawLists, alreadySent) {
   const sent = new Set(alreadySent || []);
   const seen = new Set();
-  const picked = [];
+  const bySource = {};
+  const order = [];
   for (const raw of rawLists) {
-    for (const item of raw.list || []) {
-      const vacancy = adaptHabr(item);
+    const habr = (raw.list || []).map(adaptHabr);
+    const vacancies = raw.vacancies ? raw.vacancies : habr;
+    for (const vacancy of vacancies) {
       if (!vacancy || !vacancy.url) continue;
+      const source = vacancy.source || "habr";
+      if (source !== "habr" && !categoryFor(vacancy.title, vacancy.noPage ? "" : vacancy.description || "")) continue;
       if (prefilterReason(vacancy)) continue;
       if (sent.has(vacancy.url) || seen.has(vacancy.url)) continue;
       seen.add(vacancy.url);
-      picked.push(vacancy);
+      if (!bySource[source]) {
+        bySource[source] = [];
+        order.push(source);
+      }
+      bySource[source].push(vacancy);
     }
+  }
+  const picked = [];
+  for (const source of order) {
+    const quota = SOURCE_QUOTA[source] || SOURCE_QUOTA.default;
+    picked.push(...bySource[source].slice(0, quota));
   }
   return picked.slice(0, DETAIL_LIMIT);
 }
@@ -561,6 +765,12 @@ if (typeof module !== "undefined" && module.exports) {
     decideBatch,
     decideLive,
     selectCandidates,
+    collectOtherSources,
+    parseRabotaHtml,
+    parsePracaHtml,
+    parseWwrRss,
+    adaptHimalayas,
+    experienceHints,
     adaptHabr,
     parseJobPosting,
     enrichWithPage,
