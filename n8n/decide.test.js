@@ -411,6 +411,84 @@ test("слово internal не считается стажировкой, а «2
   assert.match(row.dropReason, /опыт от 3/);
 });
 
+test("удалёнка hh.ru из России отправляется, офис и «только РФ» нет", () => {
+  const rows = Object.fromEntries(
+    decideBatch([
+      {
+        title: "Junior QA",
+        company: "Eva",
+        url: "https://hh.ru/vacancy/1",
+        area: "Екатеринбург",
+        remote: true,
+        level: "Junior",
+        description: "Без опыта. Удалённо по России.",
+        source: "hh.ru",
+      },
+      {
+        title: "Junior QA",
+        company: "Bank",
+        url: "https://hh.ru/vacancy/2",
+        area: "Москва",
+        remote: true,
+        level: "Junior",
+        description: "Только для граждан РФ.",
+        source: "hh.ru",
+      },
+      {
+        title: "Junior QA",
+        company: "Office",
+        url: "https://hh.ru/vacancy/3",
+        area: "Москва",
+        remote: false,
+        level: "Junior",
+        description: "Работа в офисе.",
+        source: "hh.ru",
+      },
+    ]).map((row) => [row.url, row]),
+  );
+  assert.equal(rows["https://hh.ru/vacancy/1"].action, "send");
+  assert.match(rows["https://hh.ru/vacancy/1"].text, /удалённо, Россия \(Екатеринбург\)/);
+  assert.equal(rows["https://hh.ru/vacancy/2"].action, "drop");
+  assert.equal(rows["https://hh.ru/vacancy/3"].action, "drop");
+});
+
+test("одна и та же вакансия с rabota.by и hh.ru берётся один раз", () => {
+  const picked = selectCandidates(
+    [
+      {
+        vacancies: [
+          {
+            title: "Junior QA",
+            company: "A",
+            url: "https://rabota.by/vacancy/55",
+            area: "Минск",
+            remote: false,
+            level: "Junior",
+            description: "",
+            source: "rabota.by",
+          },
+        ],
+      },
+      {
+        vacancies: [
+          {
+            title: "Junior QA",
+            company: "A",
+            url: "https://hh.ru/vacancy/55",
+            area: "Москва",
+            remote: true,
+            level: "Junior",
+            description: "",
+            source: "hh.ru",
+          },
+        ],
+      },
+    ],
+    [],
+  );
+  assert.deepEqual(picked.map((row) => row.url), ["https://rabota.by/vacancy/55"]);
+});
+
 test("новые AI-специальности распознаются", () => {
   assert.equal(categoryFor("Prompt Engineer (стажёр)", ""), "AI Entry Level");
   assert.equal(categoryFor("Оператор нейросетей", "Работа с ChatGPT"), "AI Entry Level");

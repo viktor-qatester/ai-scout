@@ -6,8 +6,8 @@
 
 // Middle по карточке Хабра по умолчанию не подходит начинающему.
 const ALLOW_MIDDLE = false;
-const DETAIL_LIMIT = 60;
-const SOURCE_QUOTA = { habr: 20, default: 12 };
+const DETAIL_LIMIT = 80;
+const SOURCE_QUOTA = { habr: 20, "hh.ru": 20, default: 12 };
 
 const WORD = "[\\p{L}\\p{N}_]";
 const BOUNDARY = `(?:(?<!${WORD})(?=${WORD})|(?<=${WORD})(?!${WORD}))`;
@@ -233,18 +233,24 @@ function hardReject(title, description) {
 }
 
 // confirmed: Беларусь названа в тексте или стоит в локации.
+// russia: удалёнка с hh.ru, вакансия размещена в России.
 // unconfirmed: удалёнка без указания страны.
-// blocked: в тексте прямо сказано «только РФ» или не удалёнка вне Беларуси.
+// blocked: «только РФ», офис вне Беларуси или не удалёнка на hh.ru.
 function geoStatus(vacancy) {
   const place = `${vacancy.area || ""} ${vacancy.pageCountry || ""}`;
   if (has(place, BELARUS_PLACE)) return "confirmed";
   const text = `${vacancy.description || ""}`;
   if (has(text, RUSSIA_ONLY)) return "blocked";
   if (has(text, BELARUS_OR_WORLD)) return "confirmed";
+  if (vacancy.source === "hh.ru") return vacancy.remote ? "russia" : "blocked";
   return vacancy.remote ? "unconfirmed" : "blocked";
 }
 
 function placeLabel(vacancy, geo) {
+  if (geo === "russia") {
+    const city = vacancy.area || vacancy.pageCity || "город не указан";
+    return `удалённо, Россия (${city})`;
+  }
   if (has(vacancy.area || "", BELARUS_PLACE)) return vacancy.area;
   if (geo === "confirmed") return "удалённо, Беларусь подходит";
   const office = [vacancy.pageCity, vacancy.pageCountry].filter(Boolean).join(", ");
@@ -267,6 +273,9 @@ function scoreVacancy(vacancy, category, geo) {
   if (geo === "confirmed") {
     score += 2;
     reasons.push(vacancy.remote ? "можно удалённо из Беларуси" : "локация в Беларуси");
+  } else if (geo === "russia") {
+    score += 1;
+    reasons.push("удалённо, вакансия из России");
   } else {
     reasons.push("удалёнка: Беларусь в тексте не указана");
   }
@@ -447,6 +456,16 @@ function parseRabotaHtml(html) {
   return found;
 }
 
+function parseHhHtml(html) {
+  return parseRabotaHtml(html)
+    .filter((vacancy) => vacancy.remote)
+    .map((vacancy) => ({
+      ...vacancy,
+      url: vacancy.url.replace("https://rabota.by/", "https://hh.ru/"),
+      source: "hh.ru",
+    }));
+}
+
 function parsePracaHtml(html) {
   const parts = String(html || "").split('class="locationDepended vac-small"').slice(1);
   const found = [];
@@ -530,6 +549,29 @@ function parseWwrRss(xml) {
 const PRACA_QUERIES = ["тестировщик", "QA", "стажировка ИИ", "искусственный интеллект", "нейросети", "Data Scientist"];
 const HIMALAYAS_QUERIES = ["junior qa", "qa intern", "junior ai", "prompt engineer", "llm", "junior machine learning"];
 
+const HH_QUERIES = [
+  "junior QA",
+  "стажер тестировщик",
+  "QA стажировка",
+  "junior AI",
+  "стажировка ИИ",
+  "AI QA",
+  "prompt engineer",
+  "junior ML",
+  "нейросети",
+  "data annotator",
+];
+
+function hhUrl(query, experience) {
+  return (
+    "https://hh.ru/search/vacancy?text=" +
+    encodeURIComponent(query) +
+    "&schedule=remote&area=113&experience=" +
+    experience +
+    "&items_on_page=20&order_by=publication_time"
+  );
+}
+
 function rabotaUrl(query) {
   return `https://rabota.by/search/vacancy?text=${encodeURIComponent(query)}&area=16&items_on_page=20`;
 }
@@ -560,6 +602,11 @@ async function collectOtherSources(http, queries) {
     batches.push({ source, vacancies });
   };
   await run("rabota.by", queries.map(rabotaUrl), parseRabotaHtml);
+  await run(
+    "hh.ru",
+    HH_QUERIES.flatMap((query) => [hhUrl(query, "noExperience"), hhUrl(query, "between1And3")]),
+    parseHhHtml,
+  );
   await run("praca.by", PRACA_QUERIES.map(pracaUrl), parsePracaHtml);
   await run(
     "himalayas",
@@ -630,8 +677,10 @@ function selectCandidates(rawLists, alreadySent) {
       const source = vacancy.source || "habr";
       if (source !== "habr" && !categoryFor(vacancy.title, vacancy.noPage ? "" : vacancy.description || "")) continue;
       if (prefilterReason(vacancy)) continue;
-      if (sent.has(vacancy.url) || seen.has(vacancy.url)) continue;
+      const key = (vacancy.url.match(/\/vacancy\/(\d+)/) || [])[1] || vacancy.url;
+      if (sent.has(vacancy.url) || seen.has(vacancy.url) || seen.has(key)) continue;
       seen.add(vacancy.url);
+      seen.add(key);
       if (!bySource[source]) {
         bySource[source] = [];
         order.push(source);
@@ -782,6 +831,7 @@ if (typeof module !== "undefined" && module.exports) {
     selectCandidates,
     collectOtherSources,
     parseRabotaHtml,
+    parseHhHtml,
     parsePracaHtml,
     parseWwrRss,
     adaptHimalayas,

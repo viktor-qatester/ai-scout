@@ -166,6 +166,16 @@ const himalayasJson = JSON.stringify({
   ],
 });
 
+const hhHtml = `<div data-qa="vacancy-serp__vacancy"><a href="https://hh.ru/vacancy/333?query=1"></a>
+<span data-qa="serp-item__title-text">Junior QA</span>
+<span data-qa="vacancy-serp__vacancy-employer-text">Ромашка</span>
+<span data-qa="vacancy-serp__vacancy-address">Москва</span>
+<span data-qa="vacancy-label-work-schedule-remote">Можно удалённо</span>
+<span data-qa="vacancy-serp__vacancy-work-experience-noExperience">Без опыта</span></div>
+<div data-qa="vacancy-serp__vacancy"><a href="https://hh.ru/vacancy/334"></a>
+<span data-qa="serp-item__title-text">Junior QA офис</span>
+<span data-qa="vacancy-serp__vacancy-address">Москва</span></div>`;
+
 const wwrXml = `<rss><channel><item><title>Eps: QA Intern</title><region>Anywhere in the World</region><country></country>
 <link>https://weworkremotely.com/remote-jobs/eps-qa</link><description><![CDATA[<p>Testing</p>]]></description></item>
 <item><title>Zed: QA Engineer</title><region>USA Only</region><country>United States</country><link>https://weworkremotely.com/x</link><description>y</description></item></channel></rss>`;
@@ -183,6 +193,7 @@ test("Другие источники: четыре источника соби�
     if (url.includes("rabota.by")) return rabotaHtml;
     if (url.includes("praca.by")) return pracaHtml;
     if (url.includes("himalayas")) return himalayasJson;
+    if (url.includes("hh.ru")) return hhHtml;
     return wwrXml;
   });
   const batches = Object.fromEntries(
@@ -192,6 +203,8 @@ test("Другие источники: четыре источника соби�
   assert.equal(batches["rabota.by"][0].level, "Junior");
   assert.equal(batches["praca.by"][0].area, "Гомель");
   assert.deepEqual([...new Set(batches.himalayas.map((v) => v.url))], ["https://himalayas.app/g/1"]);
+  assert.deepEqual([...new Set(batches["hh.ru"].map((v) => v.url))], ["https://hh.ru/vacancy/333"]);
+  assert.equal(batches["hh.ru"][0].remote, true);
   assert.deepEqual(batches.weworkremotely.map((v) => v.company), ["Eps"]);
   assert.equal(batches.weworkremotely[0].company, "Eps");
 });
