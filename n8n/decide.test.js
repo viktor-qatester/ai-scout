@@ -362,6 +362,38 @@ test("опыт от 3 лет отбрасывается даже при уров
   assert.match(row.dropReason, /опыт от 3/);
 });
 
+test("фраза компании «опытных и начинающих» не делает вакансию junior", () => {
+  const [row] = decideBatch([
+    {
+      title: "QA Automation Engineer (Python)",
+      company: "Team.Inno",
+      url: "https://rabota.by/vacancy/80",
+      area: "Минск",
+      remote: false,
+      level: "",
+      description:
+        "Ищем опытных и начинающих специалистов. Опыт создания фреймворка. Опыт менторинга. Опыт от 1 года.",
+    },
+  ]);
+  assert.equal(row.action, "drop");
+  assert.match(row.dropReason, /признаков junior нет/);
+});
+
+test("«опыт от двух лет» без junior в названии не отправляется", () => {
+  const [row] = decideBatch([
+    {
+      title: "Manual QA engineer",
+      company: "Fintech",
+      url: "https://rabota.by/vacancy/81",
+      area: "Минск",
+      remote: true,
+      level: "",
+      description: "Ручное тестирование, опыт от двух лет. В работе используются ИИ-инструменты и промпты.",
+    },
+  ]);
+  assert.equal(row.action, "drop");
+});
+
 test("новые AI-специальности распознаются", () => {
   assert.equal(categoryFor("Prompt Engineer (стажёр)", ""), "AI Entry Level");
   assert.equal(categoryFor("Оператор нейросетей", "Работа с ChatGPT"), "AI Entry Level");

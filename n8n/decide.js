@@ -146,6 +146,15 @@ function stripTeamContext(text) {
   );
 }
 
+function yearsWord(years) {
+  if (!Number.isInteger(years)) return "года";
+  const mod10 = years % 10;
+  const mod100 = years % 100;
+  if (mod10 === 1 && mod100 !== 11) return "год";
+  if (mod10 >= 2 && mod10 <= 4 && (mod100 < 12 || mod100 > 14)) return "года";
+  return "лет";
+}
+
 function minimumYears(text) {
   const sample = normalize(stripTeamContext(text));
   const found = [];
@@ -166,6 +175,12 @@ function minimumYears(text) {
   for (const pattern of patterns) {
     for (const match of sample.matchAll(pattern)) found.push(Number(match[1].replace(",", ".")));
   }
+  const words = { одного: 1, двух: 2, трех: 3, "трёх": 3, четырех: 4, "четырёх": 4, пяти: 5, шести: 6 };
+  const verbal = rx(
+    "(?:опыт\\w*|experience).{0,80}?(?:от|более|больше|не менее|минимум)?\\s*(одного|двух|трех|трёх|четырех|четырёх|пяти|шести)\\s*(?:лет|года|год)",
+    "giu",
+  );
+  for (const match of sample.matchAll(verbal)) found.push(words[match[1]]);
   if (!found.length) return null;
   return Math.min(...found);
 }
@@ -183,15 +198,18 @@ function levelDropReason(vacancy) {
   return "";
 }
 
-// Уровень в карточке не указан: нужен хоть один признак начинающего.
+// Фраза «опытных и начинающих» описывает компанию, а не эту вакансию.
+function roleText(vacancy) {
+  const raw = vacancy.noPage ? vacancy.title : `${vacancy.title}\n${vacancy.description || ""}`;
+  return String(raw).replace(rx("опытн\\w*\\s+и\\s+начинающ\\w*", "giu"), " ");
+}
+
+const JUNIOR_TEXT = "junior|intern|trainee|entry level|стажер|стажировк|без опыта|опыт не требуется|для начинающ";
+
+// Уровень в карточке не указан: нужен junior, стажировка или «без опыта» в названии или тексте роли.
 function hasJuniorSignal(vacancy) {
-  const text = vacancy.noPage ? vacancy.title : `${vacancy.title}\n${vacancy.description || ""}`;
   if (titleIsJunior(vacancy.title) || levelIsJunior(vacancy.level)) return true;
-  if (has(text, "junior|intern|trainee|entry level|стажер|стажировк|без опыта|опыт не требуется|начинающ")) {
-    return true;
-  }
-  const years = minimumYears(vacancy.description || "");
-  return years !== null && years <= 2;
+  return has(roleText(vacancy), JUNIOR_TEXT);
 }
 
 function prefilterReason(vacancy) {
@@ -201,7 +219,7 @@ function prefilterReason(vacancy) {
 
 function hardReject(title, description) {
   const years = minimumYears(description);
-  if (years !== null && years >= 3) return `в требованиях опыт от ${years} лет`;
+  if (years !== null && years >= 3) return `в требованиях опыт от ${years} ${yearsWord(years)}`;
   const cleaned = normalize(stripTeamContext(description));
   if (
     has(
@@ -235,14 +253,10 @@ function placeLabel(vacancy, geo) {
 }
 
 function scoreVacancy(vacancy, category, geo) {
-  const text = vacancy.noPage ? vacancy.title : `${vacancy.title}\n${vacancy.description || ""}`;
+  const text = roleText(vacancy);
   let score = 0;
   const reasons = [];
-  if (
-    titleIsJunior(vacancy.title) ||
-    levelIsJunior(vacancy.level) ||
-    has(text, "junior|intern|trainee|стажер|стажировк|без опыта|начинающ")
-  ) {
+  if (titleIsJunior(vacancy.title) || levelIsJunior(vacancy.level) || has(text, JUNIOR_TEXT)) {
     score += 3;
     reasons.push("уровень junior, стажировка или без опыта");
   }
@@ -263,7 +277,7 @@ function scoreVacancy(vacancy, category, geo) {
   const years = minimumYears(vacancy.description || "");
   if (years !== null && years >= 1 && years <= 3) {
     score += 1;
-    reasons.push(`опыт от ${years} лет`);
+    reasons.push(`опыт от ${years} ${yearsWord(years)}`);
   }
   if (has(text, "python|\\bsql\\b")) {
     score += 1;
